@@ -13,10 +13,22 @@ const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 function createApp() {
   const app = express();
 
-  app.use(cors({ origin: config.clientOrigin }));
+  app.use(
+    cors({
+      origin: config.clientOrigins,
+      methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+    })
+  );
   app.use(express.json());
 
-  // Health check.
+  app.get('/', (req, res) => {
+    res.json({
+      name: 'Signal Tracker API',
+      health: '/health',
+      signals: '/api/signals',
+    });
+  });
+
   app.get('/health', (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
   });

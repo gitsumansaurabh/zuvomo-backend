@@ -4,20 +4,22 @@ const { Pool } = require('pg');
 const config = require('../config/env');
 
 if (!config.databaseUrl) {
-  // Fail fast with a clear message rather than a cryptic pg error later.
   // eslint-disable-next-line no-console
   console.warn(
-    '[db] DATABASE_URL is not set. Copy .env.example to .env and configure it.'
+    '[db] DATABASE_URL is not set. Set it in .env (local) or Vercel Project Settings (production).'
   );
 }
 
 /**
- * Single shared connection pool for the whole process.
- * SSL is toggled via DATABASE_SSL (needed for most managed/remote Postgres).
+ * Postgres pool tuned for both local dev and Vercel serverless.
+ * connectionTimeoutMillis prevents 300s Vercel hangs when DB is unreachable.
  */
 const pool = new Pool({
   connectionString: config.databaseUrl,
   ssl: config.databaseSsl ? { rejectUnauthorized: false } : false,
+  max: config.isVercel ? 1 : 10,
+  idleTimeoutMillis: 10000,
+  connectionTimeoutMillis: 15000,
 });
 
 pool.on('error', (err) => {
@@ -25,12 +27,14 @@ pool.on('error', (err) => {
   console.error('[db] Unexpected error on idle Postgres client', err);
 });
 
-/**
- * Thin query helper so callers don't have to manage clients manually.
- * @param {string} text - parameterised SQL
- * @param {Array} [params] - query parameters
- */
 async function query(text, params) {
+  if (!config.databaseUrl) {
+    const err = new Error(
+      'DATABASE_URL is not configured. Add it in Vercel → Settings → Environment Variables.'
+    );
+    err.statusCode = 503;
+    throw err;
+  }
   return pool.query(text, params);
 }
 

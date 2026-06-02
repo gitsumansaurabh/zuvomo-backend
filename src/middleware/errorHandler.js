@@ -17,7 +17,13 @@ function notFoundHandler(req, res, next) {
 // eslint-disable-next-line no-unused-vars
 function errorHandler(err, req, res, next) {
   const isApiError = err instanceof ApiError;
-  const statusCode = isApiError ? err.statusCode : 500;
+  let statusCode = isApiError ? err.statusCode : 500;
+
+  // DB misconfiguration / connectivity (avoid masking as generic 500)
+  if (err.statusCode === 503) statusCode = 503;
+  if (err.code === 'ETIMEDOUT' || err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
+    statusCode = 503;
+  }
 
   if (!isApiError || statusCode >= 500) {
     // eslint-disable-next-line no-console
