@@ -5,8 +5,15 @@ const ApiError = require("../utils/ApiError");
 
 const cache = new Map(); // symbol -> { price, fetchedAt }
 
+function normalizeSymbol(symbol) {
+  return String(symbol || "").trim().toUpperCase();
+}
+
 async function getPrice(symbol) {
-  const sym = String(symbol).toUpperCase();
+  const sym = normalizeSymbol(symbol);
+  if (!sym) {
+    throw ApiError.badRequest("Trading pair symbol is required");
+  }
   const cached = cache.get(sym);
   const now = Date.now();
   if (cached && now - cached.fetchedAt < config.priceCacheTtlMs) {
@@ -43,12 +50,18 @@ async function getPrice(symbol) {
 }
 
 async function getPrices(symbols) {
-  const unique = [...new Set(symbols.map((s) => String(s).toUpperCase()))];
+  const unique = [
+    ...new Set(symbols.map((s) => normalizeSymbol(s)).filter(Boolean)),
+  ];
   const entries = await Promise.all(
     unique.map(async (sym) => {
       try {
         return [sym, await getPrice(sym)];
-      } catch (_err) {
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[binance] failed to fetch price for ${sym}: ${err.message}`,
+        );
         return [sym, null];
       }
     }),

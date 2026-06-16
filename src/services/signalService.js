@@ -7,6 +7,10 @@ const { computeRoi } = require("../utils/roi");
 const { STATUS, TERMINAL_STATUSES } = require("../constants/signal");
 const ApiError = require("../utils/ApiError");
 
+function normalizeSymbol(symbol) {
+  return String(symbol || "").trim().toUpperCase();
+}
+
 async function createSignal(validatedSignal) {
   return signalModel.create({ ...validatedSignal, status: STATUS.OPEN });
 }
@@ -20,7 +24,7 @@ async function listSignals() {
 
   const enriched = [];
   for (const signal of signals) {
-    const currentPrice = priceMap.get(signal.symbol.toUpperCase());
+    const currentPrice = priceMap.get(normalizeSymbol(signal.symbol));
     const refreshed = await refreshSignalStatus(signal, currentPrice);
     enriched.push(presentSignal(refreshed, currentPrice));
   }
@@ -33,7 +37,7 @@ async function getSignalById(id) {
 
   let currentPrice = null;
   try {
-    currentPrice = await binanceService.getPrice(signal.symbol);
+    currentPrice = await binanceService.getPrice(normalizeSymbol(signal.symbol));
   } catch (_err) {
     currentPrice = null; // keep working even if price fetch fails
   }
@@ -99,7 +103,7 @@ function presentSignal(signal, currentPrice) {
 
   return {
     id: signal.id,
-    symbol: signal.symbol,
+    symbol: normalizeSymbol(signal.symbol),
     direction: signal.direction,
     entry_price: Number(signal.entry_price),
     stop_loss: Number(signal.stop_loss),
