@@ -10,6 +10,21 @@ function parseOrigins(value) {
     .filter(Boolean);
 }
 
+function parseBinanceBases(value) {
+  const defaults = [
+    'https://api.binance.com',
+    'https://api1.binance.com',
+    'https://api2.binance.com',
+    'https://api3.binance.com',
+  ];
+  if (!value) return defaults;
+  const parsed = value
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return parsed.length > 0 ? parsed : defaults;
+}
+
 const isVercel = Boolean(process.env.VERCEL);
 
 const config = {
@@ -24,6 +39,7 @@ const config = {
     String(process.env.DATABASE_SSL || (isVercel ? 'true' : 'false')).toLowerCase() === 'true',
 
   binanceApiBase: process.env.BINANCE_API_BASE || 'https://api.binance.com',
+  binanceApiBases: parseBinanceBases(process.env.BINANCE_API_BASES),
   priceCacheTtlMs: parseInt(process.env.PRICE_CACHE_TTL_MS, 10) || 5000,
 
   entryPastGraceHours: parseInt(process.env.ENTRY_PAST_GRACE_HOURS, 10) || 24,

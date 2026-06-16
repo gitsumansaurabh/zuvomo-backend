@@ -20,29 +20,51 @@ async function getPrice(symbol) {
     return cached.price;
   }
 
-  const url = `${config.binanceApiBase}/api/v3/ticker/price?symbol=${encodeURIComponent(sym)}`;
+  const candidates =
+    Array.isArray(config.binanceApiBases) && config.binanceApiBases.length > 0
+      ? config.binanceApiBases
+      : [config.binanceApiBase];
 
-  let response;
-  try {
-    response = await fetch(url, { method: "GET" });
-  } catch (err) {
-    throw ApiError.badGateway(`Failed to reach Binance: ${err.message}`);
-  }
+  let lastError = null;
+  let price = null;
+  for (const base of candidates) {
+    const url = `${base}/api/v3/ticker/price?symbol=${encodeURIComponent(sym)}`;
+    let response;
+    try {
+      response = await fetch(url, {
+        method: "GET",
+        headers: { "User-Agent": "signal-tracker-backend/1.0" },
+      });
+    } catch (err) {
+      lastError = ApiError.badGateway(
+        `Failed to reach Binance (${base}): ${err.message}`,
+      );
+      continue;
+    }
 
-  if (response.status === 400) {
-    // Binance returns 400 for unknown symbols.
-    throw ApiError.badRequest(`Unknown or invalid trading pair: ${sym}`);
-  }
-  if (!response.ok) {
-    throw ApiError.badGateway(
-      `Binance responded with status ${response.status}`,
+    if (response.status === 400) {
+      // Binance returns 400 for unknown symbols.
+      throw ApiError.badRequest(`Unknown or invalid trading pair: ${sym}`);
+    }
+    if (!response.ok) {
+      lastError = ApiError.badGateway(
+        `Binance responded with status ${response.status} (${base})`,
+      );
+      continue;
+    }
+
+    const data = await response.json();
+    price = Number(data.price);
+    if (Number.isFinite(price)) {
+      break;
+    }
+    lastError = ApiError.badGateway(
+      `Binance returned an invalid price for ${sym} (${base})`,
     );
   }
 
-  const data = await response.json();
-  const price = Number(data.price);
   if (!Number.isFinite(price)) {
-    throw ApiError.badGateway(`Binance returned an invalid price for ${sym}`);
+    throw lastError || ApiError.badGateway(`Unable to fetch price for ${sym}`);
   }
 
   cache.set(sym, { price, fetchedAt: now });
