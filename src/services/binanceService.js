@@ -9,6 +9,58 @@ function normalizeSymbol(symbol) {
   return String(symbol || "").trim().toUpperCase();
 }
 
+function parseSymbolPair(sym) {
+  const m = /^([A-Z0-9]+)(USDT|USDC|BUSD|USD|BTC|ETH|BNB)$/.exec(sym);
+  if (!m) return null;
+  return { base: m[1], quote: m[2] };
+}
+
+async function fetchKucoinPrice(sym) {
+  const pair = parseSymbolPair(sym);
+  if (!pair) {
+    throw ApiError.badRequest(`Unsupported trading pair format: ${sym}`);
+  }
+  const kucoinSymbol = `${pair.base}-${pair.quote}`;
+  const url = `https://api.kucoin.com/api/v1/market/orderbook/level1?symbol=${encodeURIComponent(kucoinSymbol)}`;
+  const response = await fetch(url, {
+    method: "GET",
+    headers: { "User-Agent": "signal-tracker-backend/1.0" },
+  });
+  if (!response.ok) {
+    throw ApiError.badGateway(
+      `KuCoin responded with status ${response.status} (${kucoinSymbol})`,
+    );
+  }
+  const payload = await response.json();
+  const price = Number(payload?.data?.price);
+  if (!Number.isFinite(price)) {
+    throw ApiError.badGateway(
+      `KuCoin returned an invalid price for ${kucoinSymbol}`,
+    );
+  }
+  return price;
+}
+
+async function fetchMexcPrice(sym) {
+  const url = `https://api.mexc.com/api/v3/ticker/price?symbol=${encodeURIComponent(sym)}`;
+  const response = await fetch(url, {
+    method: "GET",
+    headers: { "User-Agent": "signal-tracker-backend/1.0" },
+  });
+  if (response.status === 400) {
+    throw ApiError.badRequest(`Unknown or invalid trading pair: ${sym}`);
+  }
+  if (!response.ok) {
+    throw ApiError.badGateway(`MEXC responded with status ${response.status}`);
+  }
+  const payload = await response.json();
+  const price = Number(payload?.price);
+  if (!Number.isFinite(price)) {
+    throw ApiError.badGateway(`MEXC returned an invalid price for ${sym}`);
+  }
+  return price;
+}
+
 async function getPrice(symbol) {
   const sym = normalizeSymbol(symbol);
   if (!sym) {
@@ -25,7 +77,7 @@ async function getPrice(symbol) {
       ? config.binanceApiBases
       : [config.binanceApiBase];
 
-  let lastError = null;
+  const failures = [];
   let price = null;
   for (const base of candidates) {
     const url = `${base}/api/v3/ticker/price?symbol=${encodeURIComponent(sym)}`;
@@ -36,9 +88,7 @@ async function getPrice(symbol) {
         headers: { "User-Agent": "signal-tracker-backend/1.0" },
       });
     } catch (err) {
-      lastError = ApiError.badGateway(
-        `Failed to reach Binance (${base}): ${err.message}`,
-      );
+      failures.push(`Binance ${base} network error: ${err.message}`);
       continue;
     }
 
@@ -47,9 +97,7 @@ async function getPrice(symbol) {
       throw ApiError.badRequest(`Unknown or invalid trading pair: ${sym}`);
     }
     if (!response.ok) {
-      lastError = ApiError.badGateway(
-        `Binance responded with status ${response.status} (${base})`,
-      );
+      failures.push(`Binance ${base} status ${response.status}`);
       continue;
     }
 
@@ -58,13 +106,34 @@ async function getPrice(symbol) {
     if (Number.isFinite(price)) {
       break;
     }
-    lastError = ApiError.badGateway(
-      `Binance returned an invalid price for ${sym} (${base})`,
-    );
+    failures.push(`Binance ${base} invalid payload`);
+  }
+
+  // If Binance is blocked (e.g. 451 on Vercel region), try other public exchanges.
+  if (!Number.isFinite(price)) {
+    try {
+      price = await fetchKucoinPrice(sym);
+      // eslint-disable-next-line no-console
+      console.warn(`[price-fallback] using KuCoin price for ${sym}`);
+    } catch (err) {
+      failures.push(`KuCoin failed: ${err.message}`);
+    }
   }
 
   if (!Number.isFinite(price)) {
-    throw lastError || ApiError.badGateway(`Unable to fetch price for ${sym}`);
+    try {
+      price = await fetchMexcPrice(sym);
+      // eslint-disable-next-line no-console
+      console.warn(`[price-fallback] using MEXC price for ${sym}`);
+    } catch (err) {
+      failures.push(`MEXC failed: ${err.message}`);
+    }
+  }
+
+  if (!Number.isFinite(price)) {
+    throw ApiError.badGateway(
+      `Unable to fetch price for ${sym}. Attempts: ${failures.join(" | ")}`,
+    );
   }
 
   cache.set(sym, { price, fetchedAt: now });
